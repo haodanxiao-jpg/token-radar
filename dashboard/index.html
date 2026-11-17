@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Token Launch Radar — pre-token protocols, ranked by learned implied value</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="mast">
+  <div>
+    <p class="kicker">TOKEN LAUNCH RADAR · RADAR-2</p>
+    <h1>Protocols with no token yet,<br>ranked by what a token could be worth.</h1>
+    <p class="sub" id="sub">Loading the snapshot…</p>
+  </div>
+  <div class="mast-note">Implied value is learned from the snapshot's own traded peers, category by category. It is a ranking tool, not a price prediction.</div>
+</header>
+<section class="stats" id="stats"></section>
+<nav class="tabs" id="tabs">
+  <button data-view="board" class="on">Radar board</button>
+  <button data-view="live">Live tokens</button>
+  <button data-view="model">The model</button>
+</nav>
+<main id="app" aria-live="polite"></main>
+<footer class="foot">A protocol recording no token is not proof it has none, and not a promise it will ever launch one. Data: the sealed snapshot named in the model view. Built for make.fun's token-radar-01 bounty.</footer>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
