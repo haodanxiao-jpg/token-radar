@@ -3,26 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Launch Radar — pre-token protocols, ranked by learned implied value</title>
+<title>Token Launch Radar — every protocol accounted for, every price held out and tested</title>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
 <header class="mast">
   <div>
-    <p class="kicker">TOKEN LAUNCH RADAR · RADAR-2</p>
-    <h1>Protocols with no token yet,<br>ranked by what a token could be worth.</h1>
-    <p class="sub" id="sub">Loading the snapshot…</p>
+    <p class="kicker">◎ TOKEN LAUNCH RADAR · MODEL RADAR-3 · <span id="snapline">loading…</span></p>
+    <h1>What each unlaunched token would be worth — priced by a curve that was tested blind.</h1>
+    <p class="sub" id="sub"></p>
   </div>
-  <div class="mast-note">Implied value is learned from the snapshot's own traded peers, category by category. It is a ranking tool, not a price prediction.</div>
+  <div class="mast-note" id="formula"></div>
 </header>
 <section class="stats" id="stats"></section>
+<section class="panels" id="panels"></section>
 <nav class="tabs" id="tabs">
-  <button data-view="board" class="on">Radar board</button>
-  <button data-view="live">Live tokens</button>
-  <button data-view="model">The model</button>
+  <button data-view="board" class="on">No token yet</button>
+  <button data-view="live">Already trades</button>
+  <button data-view="model">Method &amp; tests</button>
 </nav>
 <main id="app" aria-live="polite"></main>
-<footer class="foot">A protocol recording no token is not proof it has none, and not a promise it will ever launch one. Data: the sealed snapshot named in the model view. Built for make.fun's token-radar-01 bounty.</footer>
+<footer class="foot">A protocol recording no token is not proof it has none, and not a promise it will ever launch one. Farm verdicts are cost-side only: what the plan's own fees and hours come to, never a forecast of any reward. Source: the sealed snapshot named above.</footer>
 <script src="../data.js"></script>
 <script src="app.js"></script>
 </body>

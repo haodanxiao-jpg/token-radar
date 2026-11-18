@@ -90,3 +90,7 @@ process.stdout.write(
   board.length + ' ranked (' + radar.early_size + ' beyond the watchlist), ' + radar.live_size + ' live shown apart\n',
 );
 process.stdout.write('token radar: top row is ' + board[0]!.name + ' at $' + board[0]!.implied_value_usd.toLocaleString('en-US') + ' implied\n');
+process.stdout.write(
+  'token radar: ledger accounts for ' + radar.model.accounted + ' of ' + snapshot.protocols.length + ' protocols; held-out typical miss x' +
+  radar.model.typical_miss + ' with ' + radar.model.within_3x_pct + '% of held-out protocols priced within 3x\n',
+);
