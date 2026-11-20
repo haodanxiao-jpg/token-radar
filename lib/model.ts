@@ -1,4 +1,11 @@
-// Token Launch Radar — model "radar-4", written for this entry.
+// Token Launch Radar — model "radar-5", written for this entry.
+// (radar-5 adds two dual-tested refinements over radar-4: a curvature
+// term in the size curve — quadratic in log TVL, which only passes both
+// tests once the maturity term is in — and a family feature in the odds
+// model, "another protocol with this name root already has a token",
+// which cuts the odds Brier score by about a fifth out-of-sample.
+// Ridge-shrunk category/family value effects and a median (LAD) curve
+// fit were also tried in this round and failed the dual test.)
 //
 // radar-4 is two fitted models multiplied, and every part of both had to
 // survive two blind tests before it was allowed in:
@@ -112,6 +119,7 @@ export interface ModelInfo {
   version: string;
   alpha: number;
   beta: number;
+  quad_coef: number;
   traded_peers: number;
   typical_miss: number;
   within_3x_pct: number;
@@ -123,7 +131,7 @@ export interface ModelInfo {
   accounted: number;
 }
 
-export const MODEL_VERSION = 'radar-4';
+export const MODEL_VERSION = 'radar-5';
 export const LIVE_ROWS = 24;
 export const DROP_SHARE = 0.05;
 export const FARMER_POOL = 0.10;
@@ -339,18 +347,21 @@ function maturityFor(age: number | null): number {
 
 // ---------- value model: curve + dual-tested terms ----------
 
-type TermKey = 'family' | 'category' | 'growth' | 'maturity' | 'chains' | 'control';
+type TermKey = 'family' | 'category' | 'growth' | 'maturity' | 'curve2' | 'chains' | 'control';
 
 interface FitState {
   alpha: number;
   beta: number;
+  quad: number;
   active: TermKey[];
   catAdj: Map<string, number>;
   famAdj: Map<string, number>;
   gamma: number;
 }
 
-function fitCurve(traded: SnapshotProtocol[]): { alpha: number; beta: number } {
+/** Least-squares fit of log(mcap) on log(TVL); quadratic when curve2 is active.
+ *  Fitted on centred x for stability, returned as A + B·x + C·x². */
+function fitBase(traded: SnapshotProtocol[], quad: boolean): { alpha: number; beta: number; quad: number } {
   const xs = traded.map((p) => Math.log(p.tvl_usd));
   const ys = traded.map((p) => Math.log(p.mcap_usd!));
   const n = xs.length;
@@ -359,15 +370,39 @@ function fitCurve(traded: SnapshotProtocol[]): { alpha: number; beta: number } {
   let num = 0;
   let den = 0;
   for (let i = 0; i < n; i++) { num += (xs[i]! - mx) * (ys[i]! - my); den += (xs[i]! - mx) ** 2; }
-  const beta = den === 0 ? 0 : num / den;
-  return { alpha: my - beta * mx, beta };
+  const slope = den === 0 ? 0 : num / den;
+  if (!quad) return { alpha: my - slope * mx, beta: slope, quad: 0 };
+  // 3-parameter fit on centred x via normal equations + Gaussian elimination
+  const X = xs.map((x) => [1, x - mx, (x - mx) ** 2] as const);
+  const XtX = [0, 1, 2].map((i) => [0, 1, 2].map((j) => X.reduce((s, row) => s + row[i]! * row[j]!, 0)));
+  const XtY = [0, 1, 2].map((i) => X.reduce((s, row, k) => s + row[i]! * ys[k]!, 0));
+  const M = XtX.map((row, i) => [...row, XtY[i]!]);
+  for (let i = 0; i < 3; i++) {
+    const piv = M[i]![i]!;
+    for (let j = i; j < 4; j++) M[i]![j] = M[i]![j]! / piv;
+    for (let k = 0; k < 3; k++) {
+      if (k === i) continue;
+      const f = M[k]![i]!;
+      for (let j = i; j < 4; j++) M[k]![j] = M[k]![j]! - f * M[i]![j]!;
+    }
+  }
+  const a = M[0]![3]!;
+  const b = M[1]![3]!;
+  const c = M[2]![3]!;
+  // convert centred form a + b·(x−mx) + c·(x−mx)² to A + B·x + C·x²
+  return { alpha: a - b * mx + c * mx * mx, beta: b - 2 * c * mx, quad: c };
 }
 
-function shrunkResidualMap(traded: SnapshotProtocol[], base: { alpha: number; beta: number }, keyOf: (p: SnapshotProtocol) => string): Map<string, number> {
+function baseLog(base: { alpha: number; beta: number; quad: number }, tvl: number): number {
+  const x = Math.log(tvl);
+  return base.alpha + base.beta * x + base.quad * x * x;
+}
+
+function shrunkResidualMap(traded: SnapshotProtocol[], base: { alpha: number; beta: number; quad: number }, keyOf: (p: SnapshotProtocol) => string): Map<string, number> {
   const groups = new Map<string, number[]>();
   const all: number[] = [];
   for (const q of traded) {
-    const r = Math.log(q.mcap_usd!) - (base.alpha + base.beta * Math.log(q.tvl_usd));
+    const r = Math.log(q.mcap_usd!) - baseLog(base, q.tvl_usd);
     all.push(r);
     const k = keyOf(q);
     const arr = groups.get(k) ?? [];
@@ -382,12 +417,12 @@ function shrunkResidualMap(traded: SnapshotProtocol[], base: { alpha: number; be
 
 function fitState(fitSet: SnapshotProtocol[], active: TermKey[]): FitState {
   const traded = fitSet.filter(isTraded);
-  const base = fitCurve(traded);
-  const state: FitState = { alpha: base.alpha, beta: base.beta, active, catAdj: new Map(), famAdj: new Map(), gamma: 0 };
+  const base = fitBase(traded, active.includes('curve2'));
+  const state: FitState = { alpha: base.alpha, beta: base.beta, quad: base.quad, active, catAdj: new Map(), famAdj: new Map(), gamma: 0 };
   if (active.includes('category')) state.catAdj = shrunkResidualMap(traded, base, (p) => p.category ?? '');
   if (active.includes('family')) state.famAdj = shrunkResidualMap(traded, base, (p) => rootName(p.name));
   if (active.includes('chains')) {
-    const pts = traded.map((q) => ({ x: Math.max(0, q.chains.length - 1), y: Math.log(q.mcap_usd!) - (base.alpha + base.beta * Math.log(q.tvl_usd)) }));
+    const pts = traded.map((q) => ({ x: Math.max(0, q.chains.length - 1), y: Math.log(q.mcap_usd!) - baseLog(base, q.tvl_usd) }));
     const mx = pts.reduce((a, p) => a + p.x, 0) / pts.length;
     const my = pts.reduce((a, p) => a + p.y, 0) / pts.length;
     let num = 0;
@@ -407,7 +442,7 @@ function controlChange(snapshot: Snapshot, slug: string): number | null {
 }
 
 function predictValue(snapshot: Snapshot, state: FitState, p: SnapshotProtocol): number {
-  let v = Math.exp(state.alpha + state.beta * Math.log(p.tvl_usd));
+  let v = Math.exp(baseLog(state, p.tvl_usd));
   for (const t of state.active) {
     if (t === 'family') { const a = state.famAdj.get(rootName(p.name)); if (a !== undefined) v *= Math.exp(a); }
     else if (t === 'category') { const a = state.catAdj.get(p.category ?? ''); if (a !== undefined) v *= Math.exp(a); }
@@ -451,6 +486,7 @@ const TERM_DEFS: { key: TermKey; label: string; control: boolean }[] = [
   { key: 'category', label: 'Category effect (category residual, shrunk)', control: false },
   { key: 'growth', label: '7-day TVL growth multiplier', control: false },
   { key: 'maturity', label: 'Age / maturity multiplier', control: false },
+  { key: 'curve2', label: 'Curve curvature (quadratic in log TVL)', control: false },
   { key: 'chains', label: 'Chain-count term', control: false },
   { key: 'control', label: 'CONTROL: another row\'s 7-day growth (must not help)', control: true },
 ];
@@ -494,18 +530,27 @@ function calibrationFrom(snapshot: Snapshot, looPreds: Map<string, number>): Cal
 
 // ---------- odds model: logistic, validated ----------
 
-const ODDS_FEATURES = ['years listed', 'log TVL', '7-day growth', 'chain count'];
+const ODDS_FEATURES = ['years listed', 'log TVL', '7-day growth', 'chain count', 'family has a token'];
+
+/** 1 when another protocol with the same name root already has a token on record. */
+export function familyHasToken(snapshot: Snapshot, p: SnapshotProtocol): number {
+  const root = rootName(p.name);
+  let count = 0;
+  for (const q of snapshot.protocols) if (rootName(q.name) === root && !isPreToken(q)) count++;
+  if (!isPreToken(p)) count--;
+  return count > 0 ? 1 : 0;
+}
 
 function oddsFeatures(snapshot: Snapshot, p: SnapshotProtocol, meanYears: number): number[] {
   const age = ageDays(snapshot.as_of, p.listed_at);
   const years = age === null ? meanYears : Math.min(age / 365, 6);
-  return [years, Math.log(p.tvl_usd), clamp(p.change_7d ?? 0, GROWTH_FLOOR, GROWTH_CAP) / 100, Math.min(p.chains.length, 8)];
+  return [years, Math.log(p.tvl_usd), clamp(p.change_7d ?? 0, GROWTH_FLOOR, GROWTH_CAP) / 100, Math.min(p.chains.length, 8), familyHasToken(snapshot, p)];
 }
 
 interface OddsFit { w: number[]; b: number; mean: number[]; sd: number[]; meanYears: number }
 
-function fitOdds(peers: SnapshotProtocol[], labels: number[], asOf: string): OddsFit {
-  const raw = peers.map((p) => oddsFeaturesRaw(p, asOf));
+function fitOdds(peers: SnapshotProtocol[], labels: number[], snapshot: Snapshot): OddsFit {
+  const raw = peers.map((p) => oddsFeaturesRaw(snapshot, p));
   const meanYears = raw.reduce((a, r) => a + r[0]!, 0) / Math.max(1, raw.length);
   const dims = raw[0]!.length;
   const mean = Array.from({ length: dims }, (_, j) => raw.reduce((a, r) => a + r[j]!, 0) / raw.length);
@@ -531,10 +576,10 @@ function fitOdds(peers: SnapshotProtocol[], labels: number[], asOf: string): Odd
   return { w, b, mean, sd, meanYears };
 }
 
-function oddsFeaturesRaw(p: SnapshotProtocol, asOf: string): number[] {
-  const age = ageDays(asOf, p.listed_at);
+function oddsFeaturesRaw(snapshot: Snapshot, p: SnapshotProtocol): number[] {
+  const age = ageDays(snapshot.as_of, p.listed_at);
   const years = age === null ? 2 : Math.min(age / 365, 6);
-  return [years, Math.log(p.tvl_usd), clamp(p.change_7d ?? 0, GROWTH_FLOOR, GROWTH_CAP) / 100, Math.min(p.chains.length, 8)];
+  return [years, Math.log(p.tvl_usd), clamp(p.change_7d ?? 0, GROWTH_FLOOR, GROWTH_CAP) / 100, Math.min(p.chains.length, 8), familyHasToken(snapshot, p)];
 }
 
 function predictOdds(fit: OddsFit, snapshot: Snapshot, p: SnapshotProtocol): number {
@@ -552,7 +597,7 @@ function slugHash(s: string): number {
 export function buildOdds(snapshot: Snapshot): { fit: OddsFit; stats: OddsStats } {
   const peers = snapshot.protocols.filter((p) => p.listed_at !== null);
   const labels = peers.map((p) => (isPreToken(p) ? 0 : 1));
-  const fit = fitOdds(peers, labels, snapshot.as_of);
+  const fit = fitOdds(peers, labels, snapshot);
   const baseRate = labels.reduce((a, b) => a + b, 0) / labels.length;
   // 10-fold out-of-sample
   let brierModel = 0;
@@ -561,7 +606,7 @@ export function buildOdds(snapshot: Snapshot): { fit: OddsFit; stats: OddsStats 
   for (let fold = 0; fold < 10; fold++) {
     const testIdx = peers.map((p, i) => i).filter((i) => slugHash(peers[i]!.slug) % 10 === fold);
     const trainIdx = peers.map((p, i) => i).filter((i) => slugHash(peers[i]!.slug) % 10 !== fold);
-    const f = fitOdds(trainIdx.map((i) => peers[i]!), trainIdx.map((i) => labels[i]!), snapshot.as_of);
+    const f = fitOdds(trainIdx.map((i) => peers[i]!), trainIdx.map((i) => labels[i]!), snapshot);
     for (const i of testIdx) {
       const pr = predictOdds(f, snapshot, peers[i]!);
       brierModel += (pr - labels[i]!) ** 2;
@@ -572,7 +617,7 @@ export function buildOdds(snapshot: Snapshot): { fit: OddsFit; stats: OddsStats 
   // walk-forward
   const earlyIdx = peers.map((p, i) => i).filter((i) => peers[i]!.listed_at! < WF_SPLIT);
   const lateIdx = peers.map((p, i) => i).filter((i) => peers[i]!.listed_at! >= WF_SPLIT);
-  const wfFit = fitOdds(earlyIdx.map((i) => peers[i]!), earlyIdx.map((i) => labels[i]!), snapshot.as_of);
+  const wfFit = fitOdds(earlyIdx.map((i) => peers[i]!), earlyIdx.map((i) => labels[i]!), snapshot);
   const wfBase = earlyIdx.reduce((a, i) => a + labels[i]!, 0) / earlyIdx.length;
   let wfBrierModel = 0;
   let wfBrierBase = 0;
@@ -783,6 +828,7 @@ export function buildBoard(snapshot: Snapshot): { board: BoardRow[]; modelInfo: 
     version: MODEL_VERSION,
     alpha: round4(state.alpha),
     beta: round4(state.beta),
+    quad_coef: round4(state.quad),
     traded_peers: traded.length,
     typical_miss: round2(median(traded.map((p) => missOf(p.mcap_usd!, selection.looPreds.get(p.slug)!)))),
     within_3x_pct: calib.within,

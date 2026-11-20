@@ -1,4 +1,4 @@
-// Token Launch Radar dashboard (radar-4): renders window.RADAR with no
+// Token Launch Radar dashboard (radar-5): renders window.RADAR with no
 // framework, no fetch and no network. First screen: the coverage ledger,
 // the dual-test term table the value model had to pass, the odds model's
 // out-of-sample scores, then a self-check strip the page computes about
@@ -12,8 +12,13 @@
   var M = R.model;
   var O = M.odds_stats;
   var dropPct = Math.round(R.drop_share * 100);
-  var TERM_SHORT = { family: 'family effect', category: 'category effect', growth: 'growth', maturity: 'maturity', chains: 'chain count' };
-  var keptTerms = M.terms.filter(function (t) { return t.kept && t.key !== 'base'; });
+  var TERM_SHORT = { family: 'family effect', category: 'category effect', growth: 'growth', maturity: 'maturity', curve2: 'curvature', chains: 'chain count' };
+  function curveExpr() {
+    var s = M.alpha.toFixed(2) + ' + ' + M.beta.toFixed(2) + '·ln(TVL)';
+    if (M.quad_coef) s += ' ' + (M.quad_coef >= 0 ? '+' : '−') + ' ' + Math.abs(M.quad_coef).toFixed(3) + '·ln²(TVL)';
+    return s;
+  }
+  var keptTerms = M.terms.filter(function (t) { return t.kept && t.key !== 'base' && t.key !== 'curve2'; });
 
   function money(n) {
     if (n === null || n === undefined) return '—';
@@ -44,7 +49,7 @@
     '<b>' + R.scanned + ' protocols read.</b> ' + R.board_size + ' ranked with no token yet · ' +
     R.live_size + ' biggest already trade and are set aside · every other protocol is accounted for in the ledger below, none dropped silently.';
   document.getElementById('formula').innerHTML =
-    'headline = e<sup>' + M.alpha.toFixed(2) + ' + ' + M.beta.toFixed(2) + '·ln(TVL)</sup>' +
+    'headline = e<sup>' + curveExpr() + '</sup>' +
     keptTerms.map(function (t) { return ' × ' + (TERM_SHORT[t.key] || t.key); }).join('') +
     ' × launch odds<br><span style="color:#93a7b8">value miss ×' + M.typical_miss.toFixed(2) + ' held out · odds called right ' + O.called_right_pct.toFixed(0) + '% out-of-sample</span>';
 
@@ -215,7 +220,7 @@
       '<div class="cell"><b>' + money(r.value_if_launches_usd) + '</b><span>value if a token launches</span></div>' +
       '<div class="cell"><b>' + Math.round(r.launch_odds * 100) + '%</b><span>launch odds, fitted odds model</span></div>' +
       '<div class="cell"><b>' + money(r.range_low_usd) + ' – ' + money(r.range_high_usd) + '</b><span>calibrated P25–P75 range on expected value</span></div></div>' +
-      '<div class="formula">value = e<sup>' + M.alpha.toFixed(4) + ' + ' + M.beta.toFixed(4) + ' × ln(TVL)</sup>' + (termLine ? ' × ' + esc(termLine) : '') + '<br>' +
+      '<div class="formula">value = e<sup>' + curveExpr() + '</sup>' + (termLine ? ' × ' + esc(termLine) : '') + '<br>' +
       '= ' + money(r.value_if_launches_usd) + ' if it launches · × ' + Math.round(r.launch_odds * 100) + '% odds = ' + money(r.implied_value_usd) + ' expected</div>' +
       '<p class="explain">The curve is fitted on the ' + M.traded_peers + ' traded protocols in this snapshot. Terms ship only if they lower the typical miss in both a leave-one-out test and a walk-forward test (shipped model: ×' + M.typical_miss.toFixed(2) + ', ' + M.within_3x_pct.toFixed(1) + '% within 3×). The odds model is a logistic fit on ' + O.peers + ' protocols, called right ' + O.called_right_pct.toFixed(1) + '% out-of-sample against a ' + Math.round(O.base_rate * 100) + '% base rate. The range is calibrated: on held-out protocols the stated 50% band actually held ' + C.inside_50_actual_pct.toFixed(1) + '% of real caps.</p>' +
       '<h3>Farm plan — verdict <span class="verdict v-' + f.verdict + '">' + f.verdict + '</span> <span class="farm">' + esc(r.farm_summary) + '</span></h3>' +
@@ -241,8 +246,8 @@
     var led = M.ledger.map(function (b) { return '<tr><td>' + esc(b.label) + '</td><td class="num">' + b.count + '</td></tr>'; }).join('');
     var co = O.features.map(function (f) { return '<tr><td>' + esc(f.name) + '</td><td class="num">' + (f.coef >= 0 ? '+' : '') + f.coef.toFixed(4) + '</td></tr>'; }).join('');
     app.innerHTML =
-      '<div class="card"><h2>The models — radar-4</h2>' +
-      '<p><code>headline = value-if-launches × launch odds</code>. Value: <code>exp(' + M.alpha.toFixed(4) + ' + ' + M.beta.toFixed(4) + ' × ln(TVL))</code> fitted by least squares over the ' + M.traded_peers + ' traded protocols, times the terms that survived both tests below. Odds: a logistic model (years listed, log TVL, 7-day growth, chain count) fitted on ' + O.peers + ' protocols with known listing dates. Rows sort by headline, then TVL, then slug.</p>' +
+      '<div class="card"><h2>The models — radar-5</h2>' +
+      '<p><code>headline = value-if-launches × launch odds</code>. Value: <code>exp(' + curveExpr() + ')</code> fitted by least squares over the ' + M.traded_peers + ' traded protocols, times the terms that survived both tests below. Odds: a logistic model (years listed, log TVL, 7-day growth, chain count, family has a token) fitted on ' + O.peers + ' protocols with known listing dates. Rows sort by headline, then TVL, then slug.</p>' +
       '<p>Screens for the ranked board: pre-token only (market cap, CoinGecko id and symbol all null), category not in {CEX, Bridge, Canonical Bridge, Liquid Staking, Liquid Restaking, Restaked BTC}, no version marker at the end of the name, no whole word wrapped / staked / staking, no exchange-name prefix. Every watchlist slug is force-included. Source: ' + esc(R.source) + ' · as of ' + esc(R.as_of) + ' · watchlist floor ' + money(R.floor_usd) + '.</p></div>' +
       '<div class="card"><h2>Term selection — two blind tests, both must improve</h2><p>Leave-one-out: each traded protocol priced by a fit made without it. Walk-forward: fit on traded protocols listed before 2024-07-01, price those listed after. A term ships only if the typical miss falls in both. The control uses another row\'s growth on purpose: a test that cannot reject it would prove nothing.</p>' +
       '<table class="board"><thead><tr><th>Term, added in order</th><th class="num">Leave-one-out miss</th><th class="num">Walk-forward miss</th><th>Decision</th></tr></thead><tbody>' + tt + sp + '</tbody></table>' +
